@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  direction: rtl;
+}
+
+body {
+  font-feature-settings: 'ss01' on;
+}
+
+/* حالة التركيز مرئية دائماً — القسم 24: التنقل بلوحة المفاتيح */
+:focus-visible {
+  outline: 2px solid #185fa5;
+  outline-offset: 2px;
+}

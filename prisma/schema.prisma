@@ -1,0 +1,594 @@
+// Itqan | إتقان — Phase 1 MVP schema
+// يطبّق: قسم 7 و8 و25 من itqan-phase1-architecture.md
+// النطاق: أساس المؤسسة، الهوية والصلاحيات، البنية الأكاديمية، الطلاب وأولياء الأمور،
+//          الموظفون، الحضور، الحفظ والمراجعة، سجل التدقيق.
+// خارج النطاق عمداً في Phase 1: المالية، النقاط/المتجر، الرسائل، الشهادات، الأنشطة
+// (انظر project instructions، القسم 26 و35، ووثيقة العمارة، القسم 9-ج).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum CalendarPreference {
+  hijri
+  gregorian
+  both
+}
+
+enum JobTitle {
+  supervisor
+  teacher
+  worker
+  driver
+  finance
+  other
+}
+
+enum EmploymentStatus {
+  active
+  on_leave
+  terminated
+}
+
+enum EducationalStage {
+  tamheedi // تمهيدي
+  ibtidai // ابتدائي
+  mutawassit // متوسط
+  thanawi // ثانوي
+  jamie // جامعي
+  employee
+  other
+}
+
+enum MemorizationDirection {
+  nas_to_baqarah
+  baqarah_to_nas
+  open
+}
+
+enum StudentStatus {
+  active
+  suspended
+  withdrawn
+  discontinued
+  dismissed
+  graduated
+  archived
+}
+
+enum GuardianRelation {
+  father
+  mother
+  brother
+  sister
+  uncle
+  other
+}
+
+enum AttendanceStatus {
+  present
+  late
+  excused_absent
+  unexcused_absent
+}
+
+enum ProgressRecordType {
+  memorization
+  revision
+  recitation
+  reading
+  tajweed
+  assessment
+}
+
+enum BirthDateCalendar {
+  hijri
+  gregorian
+}
+
+// ---------------------------------------------------------------------------
+// Module A — المؤسسة، الهوية والصلاحيات
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id                  String             @id @default(uuid()) @db.Uuid
+  name                String
+  logoUrl             String?
+  defaultLocale       String             @default("ar")
+  calendarPreference  CalendarPreference @default(both)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  branches            Branch[]
+  academicYears       AcademicYear[]
+  studyPeriods        StudyPeriod[]
+  levels              Level[]
+  users               User[]
+  roles               Role[]
+  employees           Employee[]
+  students            Student[]
+  guardians           Guardian[]
+  neighborhoods       Neighborhood[]
+  curricula           Curriculum[]
+  auditLogs           AuditLog[]
+
+  @@map("organizations")
+}
+
+model Branch {
+  id        String   @id @default(uuid()) @db.Uuid
+  orgId     String   @db.Uuid
+  name      String
+  address   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  circles      Circle[]
+  userRoles    UserRole[]
+
+  @@index([orgId])
+  @@map("branches")
+}
+
+model User {
+  id          String    @id @default(uuid()) @db.Uuid
+  orgId       String    @db.Uuid
+  email       String?
+  phone       String?
+  passwordHash String
+  isActive    Boolean   @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  roles        UserRole[]
+  employee     Employee?
+  createdStudents Student[] @relation("StudentCreatedBy")
+  updatedStudents Student[] @relation("StudentUpdatedBy")
+  auditLogs    AuditLog[]
+
+  @@unique([orgId, email])
+  @@unique([orgId, phone])
+  @@index([orgId])
+  @@map("users")
+}
+
+model Role {
+  id        String   @id @default(uuid()) @db.Uuid
+  orgId     String   @db.Uuid
+  name      String
+  isSystem  Boolean  @default(false) // الأدوار السبعة الأساسية غير قابلة للحذف
+  createdAt DateTime @default(now())
+
+  organization    Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+
+  @@unique([orgId, name])
+  @@map("roles")
+}
+
+model Permission {
+  id     String @id @default(uuid()) @db.Uuid
+  code   String @unique // مثال: "students.create", "attendance.enter"
+  module String // مثال: "students", "attendance", "finance"
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+// نطاق الدور قد يكون على مستوى الفرع (القسم 5 من الوثيقة المعمارية)
+model UserRole {
+  id            String  @id @default(uuid()) @db.Uuid
+  userId        String  @db.Uuid
+  roleId        String  @db.Uuid
+  scopeBranchId String? @db.Uuid
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  branch Branch? @relation(fields: [scopeBranchId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId, scopeBranchId])
+  @@map("user_roles")
+}
+
+// ---------------------------------------------------------------------------
+// البنية الأكاديمية — Organization → Branch → Year → Term → Period → Level → Circle
+// ---------------------------------------------------------------------------
+
+model AcademicYear {
+  id        String   @id @default(uuid()) @db.Uuid
+  orgId     String   @db.Uuid
+  name      String // مثال: "١٤٤٧-١٤٤٨هـ"
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  isCurrent Boolean  @default(false)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  terms        Term[]
+
+  @@index([orgId])
+  @@map("academic_years")
+}
+
+model Term {
+  id             String   @id @default(uuid()) @db.Uuid
+  academicYearId String   @db.Uuid
+  name           String
+  startDate      DateTime @db.Date
+  endDate        DateTime @db.Date
+
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  circles      Circle[]
+  curricula    Curriculum[]
+
+  @@index([academicYearId])
+  @@map("terms")
+}
+
+model StudyPeriod {
+  id        String @id @default(uuid()) @db.Uuid
+  orgId     String @db.Uuid
+  name      String // العصر / المغرب / العشاء
+  sortOrder Int    @default(0)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  circles      Circle[]
+
+  @@index([orgId])
+  @@map("study_periods")
+}
+
+model Level {
+  id        String @id @default(uuid()) @db.Uuid
+  orgId     String @db.Uuid
+  name      String
+  sortOrder Int    @default(0)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  circles      Circle[]
+  curricula    Curriculum[]
+
+  @@index([orgId])
+  @@map("levels")
+}
+
+model Circle {
+  id            String   @id @default(uuid()) @db.Uuid
+  branchId      String   @db.Uuid
+  termId        String   @db.Uuid
+  studyPeriodId String   @db.Uuid
+  levelId       String   @db.Uuid
+  name          String
+  capacity      Int?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  branch      Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  term        Term        @relation(fields: [termId], references: [id], onDelete: Cascade)
+  studyPeriod StudyPeriod @relation(fields: [studyPeriodId], references: [id], onDelete: Restrict)
+  level       Level       @relation(fields: [levelId], references: [id], onDelete: Restrict)
+
+  teacherAssignments   CircleTeacherAssignment[]
+  studentAssignments   StudentCircleAssignment[]
+  attendanceRecords    AttendanceRecord[]
+
+  @@index([branchId])
+  @@index([termId])
+  @@map("circles")
+}
+
+// يسمح بأكثر من معلم لنفس الحلقة — متطلب أصلي محفوظ
+model CircleTeacherAssignment {
+  id         String    @id @default(uuid()) @db.Uuid
+  circleId   String    @db.Uuid
+  employeeId String    @db.Uuid
+  startedAt  DateTime  @default(now()) @db.Date
+  endedAt    DateTime? @db.Date
+
+  circle   Circle   @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([circleId])
+  @@index([employeeId])
+  @@map("circle_teacher_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// الموظفون
+// ---------------------------------------------------------------------------
+
+model Employee {
+  id               String           @id @default(uuid()) @db.Uuid
+  orgId            String           @db.Uuid
+  userId           String?          @unique @db.Uuid
+  fullName         String
+  jobTitle         JobTitle
+  phone            String?
+  employmentStatus EmploymentStatus @default(active)
+  createdBy        String?          @db.Uuid
+  updatedBy        String?          @db.Uuid
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  deletedAt        DateTime? // حذف ناعم فقط — القاعدة رقم 1
+
+  organization        Organization               @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user                 User?                      @relation(fields: [userId], references: [id])
+  circleAssignments    CircleTeacherAssignment[]
+  attendanceRecorded   AttendanceRecord[]         @relation("AttendanceRecordedByEmployee")
+  progressRecorded     ProgressRecord[]           @relation("ProgressRecordedByEmployee")
+
+  @@index([orgId])
+  @@map("employees")
+}
+
+// ---------------------------------------------------------------------------
+// الطلاب وأولياء الأمور
+// ---------------------------------------------------------------------------
+
+model Neighborhood {
+  id    String @id @default(uuid()) @db.Uuid
+  orgId String @db.Uuid
+  name  String
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  students     Student[]
+
+  @@unique([orgId, name])
+  @@map("neighborhoods")
+}
+
+model Student {
+  id                     String                 @id @default(uuid()) @db.Uuid // المعرّف الداخلي الثابت
+  orgId                  String                 @db.Uuid
+  displayNumber          String // الرقم المعروض/الباركود — قابل لإعادة التهيئة (القاعدة د-4)
+  fullName               String
+  nationalId             String? // مشفّر عند التخزين — القسم 23
+  nationality             String?
+  birthDate              DateTime?              @db.Date
+  birthDateCalendar      BirthDateCalendar?     @default(gregorian)
+  educationalStage       EducationalStage
+  grade                  String?
+  address                String?
+  neighborhoodId         String?                @db.Uuid
+  studentPhone           String?
+  photoUrl               String?
+  memorizationDirection  MemorizationDirection  @default(open)
+  status                 StudentStatus          @default(active)
+  registeredAt           DateTime               @default(now()) @db.Date
+  createdBy              String?                @db.Uuid
+  updatedBy              String?                @db.Uuid
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+  deletedAt              DateTime? // حذف ناعم فقط — القاعدة رقم 1
+
+  organization       Organization              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  neighborhood       Neighborhood?             @relation(fields: [neighborhoodId], references: [id])
+  createdByUser      User?                     @relation("StudentCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser      User?                     @relation("StudentUpdatedBy", fields: [updatedBy], references: [id])
+
+  guardians          StudentGuardian[]
+  circleAssignments  StudentCircleAssignment[]
+  statusHistory      StudentStatusHistory[]
+  attendanceRecords  AttendanceRecord[]
+  progressRecords    ProgressRecord[]
+  studentCurricula   StudentCurriculum[]
+
+  @@unique([orgId, displayNumber])
+  @@unique([orgId, nationalId])
+  @@index([orgId])
+  @@index([orgId, fullName])
+  @@map("students")
+}
+
+model Guardian {
+  id           String           @id @default(uuid()) @db.Uuid
+  orgId        String           @db.Uuid
+  fullName     String
+  phone        String
+  email        String?
+  relationType GuardianRelation @default(other)
+  createdAt    DateTime         @default(now())
+
+  organization Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  students     StudentGuardian[]
+
+  @@index([orgId])
+  @@map("guardians")
+}
+
+model StudentGuardian {
+  studentId  String  @db.Uuid
+  guardianId String  @db.Uuid
+  isPrimary  Boolean @default(false)
+
+  student  Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  guardian Guardian @relation(fields: [guardianId], references: [id], onDelete: Cascade)
+
+  @@id([studentId, guardianId])
+  @@map("student_guardians")
+}
+
+// تاريخ كامل — لا يُكتب فوقه أبداً (القاعدة رقم 2)
+model StudentCircleAssignment {
+  id        String    @id @default(uuid()) @db.Uuid
+  studentId String    @db.Uuid
+  circleId  String    @db.Uuid
+  startedAt DateTime  @db.Date
+  endedAt   DateTime? @db.Date // NULL = التعيين النشط الحالي
+  reason    String?
+  createdBy String?   @db.Uuid
+  createdAt DateTime  @default(now())
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  circle  Circle  @relation(fields: [circleId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([circleId])
+  // ملاحظة: القيد الفريد الجزئي "طالب نشط واحد لكل فترة دراسية" (endedAt IS NULL)
+  // يُنشأ عبر migration SQL يدوية (Prisma لا يدعم partial unique index مباشرة).
+  @@map("student_circle_assignments")
+}
+
+model StudentStatusHistory {
+  id        String        @id @default(uuid()) @db.Uuid
+  studentId String        @db.Uuid
+  oldStatus StudentStatus
+  newStatus StudentStatus
+  changedAt DateTime      @default(now())
+  changedBy String?       @db.Uuid
+  note      String?
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@map("student_status_history")
+}
+
+// ---------------------------------------------------------------------------
+// الحضور، الحفظ والمراجعة اليومية
+// ---------------------------------------------------------------------------
+
+model AttendanceRecord {
+  id         String            @id @default(uuid()) @db.Uuid
+  studentId  String            @db.Uuid
+  circleId   String            @db.Uuid
+  studyDate  DateTime          @db.Date
+  status     AttendanceStatus
+  recordedBy String            @db.Uuid // Employee — القاعدة رقم 4
+  recordedAt DateTime          @default(now())
+
+  student         Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  circle          Circle           @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  recordedByEmployee Employee      @relation("AttendanceRecordedByEmployee", fields: [recordedBy], references: [id])
+  progressRecords ProgressRecord[]
+
+  @@unique([studentId, circleId, studyDate]) // القاعدة رقم 3
+  @@index([circleId, studyDate])
+  @@map("attendance_records")
+}
+
+// جدول مرجعي ثابت — يُهيَّأ عبر seed
+model Surah {
+  id         Int    @id
+  number     Int    @unique // 1-114
+  nameAr     String
+  verseCount Int
+  juzStart   Int
+  juzEnd     Int
+
+  progressStart ProgressRecord[] @relation("ProgressStartSurah")
+  progressEnd   ProgressRecord[] @relation("ProgressEndSurah")
+
+  @@map("surahs")
+}
+
+model ProgressRecord {
+  id             String             @id @default(uuid()) @db.Uuid
+  attendanceId   String             @db.Uuid // يربط كل تقدّم بسجل حضور محدد — القاعدة رقم 4
+  studentId      String             @db.Uuid
+  recordType     ProgressRecordType
+  startSurahId   Int?
+  startAyah      Int?
+  endSurahId     Int?
+  endAyah        Int?
+  pagesCount     Decimal?           @db.Decimal(5, 2)
+  qualityScore   Decimal?           @db.Decimal(4, 2) // مقياس قابل للتهيئة لكل مؤسسة
+  mistakeCount   Int?
+  notes          String?
+  recordedBy     String             @db.Uuid
+  recordedAt     DateTime           @default(now())
+
+  attendance        AttendanceRecord @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+  student           Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  startSurah        Surah?           @relation("ProgressStartSurah", fields: [startSurahId], references: [id])
+  endSurah          Surah?           @relation("ProgressEndSurah", fields: [endSurahId], references: [id])
+  recordedByEmployee Employee        @relation("ProgressRecordedByEmployee", fields: [recordedBy], references: [id])
+
+  @@index([attendanceId])
+  @@index([studentId, recordType])
+  @@map("progress_records")
+}
+
+// ---------------------------------------------------------------------------
+// المنهج — الجداول تُنشأ مبكراً لتفادي إعادة الهيكلة في Phase 2 (القسم 9-ج)
+// ---------------------------------------------------------------------------
+
+model Curriculum {
+  id                      String  @id @default(uuid()) @db.Uuid
+  orgId                   String  @db.Uuid
+  levelId                 String? @db.Uuid
+  termId                  String? @db.Uuid
+  name                    String
+  dailyMemorizationAmount Decimal? @db.Decimal(5, 2)
+  dailyRevisionAmount     Decimal? @db.Decimal(5, 2)
+
+  organization     Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  level            Level?              @relation(fields: [levelId], references: [id])
+  term             Term?               @relation(fields: [termId], references: [id])
+  studentCurricula StudentCurriculum[]
+
+  @@index([orgId])
+  @@map("curricula")
+}
+
+model StudentCurriculum {
+  studentId                String  @db.Uuid
+  curriculumId             String? @db.Uuid
+  customDailyMemorization  Decimal? @db.Decimal(5, 2)
+  customDailyRevision      Decimal? @db.Decimal(5, 2)
+
+  student    Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  curriculum Curriculum? @relation(fields: [curriculumId], references: [id])
+
+  @@id([studentId])
+  @@map("student_curricula")
+}
+
+// ---------------------------------------------------------------------------
+// سجل التدقيق
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  orgId      String   @db.Uuid
+  userId     String?  @db.Uuid
+  action     String // مثال: "student.update", "student.transfer"
+  entityType String
+  entityId   String
+  beforeJson Json?
+  afterJson  Json?
+  createdAt  DateTime @default(now())
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id])
+
+  @@index([orgId, entityType, entityId])
+  @@index([orgId, createdAt])
+  @@map("audit_logs")
+}
