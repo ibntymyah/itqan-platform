@@ -74,7 +74,6 @@ export async function createBranch(formData: FormData) {
   });
 
   revalidatePath('/settings/branches');
-  return branch;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +103,6 @@ export async function createAcademicYear(formData: FormData) {
   });
 
   revalidatePath('/settings/academic-years');
-  return year;
 }
 
 export async function createTerm(formData: FormData) {
@@ -136,7 +134,6 @@ export async function createTerm(formData: FormData) {
   });
 
   revalidatePath('/settings/academic-years');
-  return term;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +160,6 @@ export async function createStudyPeriod(formData: FormData) {
   });
 
   revalidatePath('/settings/study-periods');
-  return period;
 }
 
 export async function createLevel(formData: FormData) {
@@ -186,7 +182,6 @@ export async function createLevel(formData: FormData) {
   });
 
   revalidatePath('/settings/levels');
-  return level;
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +227,6 @@ export async function createCircle(formData: FormData) {
   });
 
   revalidatePath('/settings/circles');
-  return circle;
 }
 
 export async function assignTeacherToCircle(formData: FormData) {
@@ -263,5 +257,4 @@ export async function assignTeacherToCircle(formData: FormData) {
   });
 
   revalidatePath('/settings/circles');
-  return assignment;
 }
