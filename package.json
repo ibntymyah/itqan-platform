@@ -5,8 +5,8 @@
   "description": "إتقان — منصة إدارة مدارس وحلقات القرآن الكريم (Phase 1 MVP)",
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && prisma db push --accept-data-loss && tsx prisma/seed.ts && next build",
-    "start": "next start",
+"build": "prisma generate && next build",
+"start": "prisma db push --accept-data-loss && tsx prisma/seed.ts && next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
