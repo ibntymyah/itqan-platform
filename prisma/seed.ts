@@ -33,11 +33,12 @@ async function seedDemoAccount() {
     create: { orgId: org.id, email: DEMO_EMAIL, passwordHash, isActive: true }
   });
 
-  await prisma.userRole.upsert({
-    where: { userId_roleId_scopeBranchId: { userId: user.id, roleId: role.id, scopeBranchId: null } },
-    update: {},
-    create: { userId: user.id, roleId: role.id }
+  const existingUserRole = await prisma.userRole.findFirst({
+    where: { userId: user.id, roleId: role.id, scopeBranchId: null }
   });
+  if (!existingUserRole) {
+    await prisma.userRole.create({ data: { userId: user.id, roleId: role.id } });
+  }
 
   console.log('حساب المعاينة التجريبي جاهز:');
   console.log(`  البريد: ${DEMO_EMAIL}`);
